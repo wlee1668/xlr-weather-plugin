@@ -1,0 +1,193 @@
+buildscript {
+    repositories {
+        mavenLocal()
+        ["public", "thirdparty", "releases"].each { r ->
+            maven {
+                credentials {
+                    username nexusUserName
+                    password nexusPassword
+                }
+                url "${nexusBaseUrl}/repositories/${r}"
+            }
+        }
+    }
+
+    dependencies {
+        classpath "com.xebialabs.gradle.plugins:gradle-xl-plugins-plugin:${xlPluginsPluginVersion}"
+        classpath "com.xebialabs.gradle.plugins.xlrelease:gradle-xl-release-plugin-plugin:${xlReleasePluginPluginVersion}"
+        classpath "com.moowork.gradle:gradle-node-plugin:1.1.1"
+        classpath "gradle.plugin.com.hierynomus.gradle.plugins:jython-gradle-plugin:${jythonGradlePluginVersion}"
+        classpath "com.avast.gradle:gradle-docker-compose-plugin:0.8.0"
+    }
+}
+
+plugins {
+    id "com.github.hierynomus.license" version "0.14.0"
+}
+
+import groovy.json.JsonSlurper
+
+apply plugin: 'com.github.hierynomus.license'
+apply plugin: 'java'
+apply plugin: 'maven'
+apply plugin: 'com.moowork.node'
+apply plugin: 'com.xebialabs.xl-release.plugin'
+apply plugin: 'xebialabs.root.opinions'
+apply plugin: 'xebialabs.opinions'
+apply plugin: 'com.xebialabs.dependency'
+apply plugin: 'docker-compose'
+
+node {
+    version = '8.9.0'
+    yarnVersion = '0.22.0'
+    npmVersion = '3.10.9'
+    download = true
+    nodeModulesDir = file("${rootProject.projectDir}")
+}
+
+group 'com.xebialabs.xlrelease.plugins'
+
+xlReleasePlugin {
+    useSourcesDirectly = false
+}
+
+dependencies {
+    compileOnly fileTree(dir: "${xlReleasePlugin.xlReleaseHome}/lib", includes: ['*.jar'])
+    testCompile "com.xebialabs.gradle.plugins:xl-test-api:0.0.62"
+}
+
+configurations {
+    jython
+}
+
+configurations.jython.extendsFrom(configurations.compile)
+
+sourceSets {
+    // js are processed by webpack
+    main {
+        resources {
+            exclude '**/*.js'
+        }
+    }
+}
+
+task yarnRunBuild(type: YarnTask) {
+    args = ['run', 'build']
+}
+
+license {
+    header project.file('HEADER')
+    ignoreFailures false
+    excludes(["**/*.json", "**/*.yaml", "**/*.yml"])
+}
+
+task licenseFormatJs(type: com.hierynomus.gradle.license.tasks.LicenseFormat) {
+    source = fileTree(dir: "src").include("**/*.js")
+}
+licenseFormat.dependsOn licenseFormatJs
+
+task licenseCheckJs(type: com.hierynomus.gradle.license.tasks.LicenseCheck) {
+    source = fileTree(dir: "src").include("**/*.js")
+}
+
+task deleteLicense {
+    doLast {
+        delete "xl-conf"
+        delete ".env"
+    }
+}
+
+dockerCompose {
+    useComposeFiles = ['src/test/resources/docker/docker-compose.yml']
+    removeImages = "All"
+    removeOrphans = true
+}
+
+task testEndToEnd(type: Test) {
+    systemProperties System.getProperties()
+    useTestNG() {
+        outputDirectory = file("$project.buildDir/testng-reports")
+        useDefaultListeners = true
+    }
+    if (!project.hasProperty('local')) {
+        dockerCompose.isRequiredBy(testEndToEnd)
+    }
+}
+
+task createDockerEnv(type: WriteProperties) {
+    def files = fileTree("$project.buildDir/libs").filter { it.isFile() }.files.name
+    def tag = (project.hasProperty('tag')) ? tag : "8.1.0"
+    def registry = (project.hasProperty('xebialabsRegistry')) ? "xl-docker.xebialabs.com/xl-release" : "xebialabs/xl-release"
+    def server_path = (tag == "8.1.0") ? "/opt/xl-release-server" : "/opt/xebialabs/xl-release-server"
+    property("TAG", tag)
+    property("REGISTRY_URL", registry)
+    property("PLUGIN_JAR", files[0] != null ? files[0] : "")
+    property("SERVER_PATH", server_path)
+    property("LICENSE_PATH", "./../../../../xl-conf/xl-release-license.lic")
+    setOutputFile(file('./.env'))
+    writeProperties()
+}
+
+task createLicense {
+    def username = (project.hasProperty('licenseUsername')) ? licenseUsername : ""
+    def password = (project.hasProperty('licensePassword')) ? licensePassword : ""
+    def license = (project.hasProperty('xlrLicense')) ? xlrLicense : ""
+    def licenseData = ""
+
+    doFirst {
+        if (license == "" && username != "" && password != "") {
+            licenseData = getXlrTrialLicense(username, password)
+        } else if (license != "" && file(license).exists()) {
+            licenseData = new File(license).text
+        } else {
+            throw new Exception("Unable to get XL Release License")
+        }
+    }
+
+    doLast {
+        def folder = new File('./xl-conf')
+        if (!folder.exists()) {
+            folder.mkdirs()
+        }
+        new File("./xl-conf/xl-release-license.lic").text = licenseData
+    }
+}
+
+def getXlrTrialLicense(username, password) {
+    def authString = (username + ":" + password).getBytes().encodeBase64().toString()
+    def url = "https://download.xebialabs.com/api/trial/xl-release"
+    def conn = url.toURL().openConnection()
+    def data = '{"firstName":"xlc","lastName":"xlc","email":"xlc@xebialabs.com","company":"xebialabs"}'
+    conn.setRequestMethod("POST")
+    conn.setDoOutput(true)
+    conn.setRequestProperty("Authorization", "Basic ${authString}")
+    conn.setRequestProperty("Content-Type", "application/json")
+    conn.getOutputStream().write(data.getBytes("UTF-8"))
+    if (conn.responseCode == 200) {
+        def json = new JsonSlurper().parseText(conn.content.text)
+        return json.license
+    } else {
+        throw new Exception("Unable to get license. Response : [${conn.responseCode}] : [${conn.responseMessage}]")
+    }
+}
+
+testEndToEnd.dependsOn assemble
+createDockerEnv.dependsOn assemble, createLicense
+
+yarnRunBuild.dependsOn yarn_install
+processResources.dependsOn yarnRunBuild
+
+composeUp.dependsOn createDockerEnv
+composeDown.finalizedBy deleteLicense
+
+uploadArchives {
+    repositories {
+        maven {
+            credentials {
+                username nexusUserName
+                password nexusPassword
+            }
+            url "${nexusBaseUrl}/repositories/releases/"
+        }
+    }
+}

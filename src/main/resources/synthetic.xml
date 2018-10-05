@@ -1,0 +1,26 @@
+<!--
+
+    Copyright (c) 2018. All rights reserved.
+
+    This software and all trademarks, trade names, and logos included herein are the property of XebiaLabs, Inc. and its affiliates, subsidiaries, and licensors.
+
+-->
+<synthetic xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns="http://www.xebialabs.com/deployit/synthetic"
+           xsi:schemaLocation="http://www.xebialabs.com/deployit/synthetic synthetic.xsd">
+
+
+
+    <type type="weather.task" extends="xlrelease.PythonScript">
+        <property name="iconLocation" default="weather/weather.png" hidden="true"/>
+        <property name="taskColor" hidden="true" default="#D94C3D"/>
+        <property name="scriptLocation" default="weather/task/check_weather.py" hidden="true"/>
+
+        <property category="input" name="zipcode" kind="string"  required="true"
+                  label="ZIP Code" description="enter zipcode"/>
+
+        <property category="output" name="temperature" kind="string" description="temperature"/>
+
+    </type>
+
+</synthetic>
