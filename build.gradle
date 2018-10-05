@@ -71,9 +71,9 @@ sourceSets {
     }
 }
 
-task yarnRunBuild(type: YarnTask) {
-    args = ['run', 'build']
-}
+//task yarnRunBuild(type: YarnTask) {
+//    args = ['run', 'build']
+//}
 
 license {
     header project.file('HEADER')
@@ -174,8 +174,8 @@ def getXlrTrialLicense(username, password) {
 testEndToEnd.dependsOn assemble
 createDockerEnv.dependsOn assemble, createLicense
 
-yarnRunBuild.dependsOn yarn_install
-processResources.dependsOn yarnRunBuild
+//yarnRunBuild.dependsOn yarn_install
+//processResources.dependsOn yarnRunBuild
 
 composeUp.dependsOn createDockerEnv
 composeDown.finalizedBy deleteLicense
